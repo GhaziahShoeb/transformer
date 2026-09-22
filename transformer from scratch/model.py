@@ -30,22 +30,22 @@ class PositionalEncoding(nn.Module):
         #add a batch dimension
         pe=pe.unsqueeze(0)
         self.register_buffer('pe',pe)
-    def forward(self,x):
-        x=x+(self.pe[:,:x.shape[1],:]).requires_grad_(False)
+    def forward(self, x):
+        x = x + self.pe[:, :x.shape[1], :]
         return self.dropout(x)
         
 class LayerNormalization(nn.Module):
 
-    def __init__(self,eps:float=10**-6)->None:
+    def __init__(self, eps: float = 10**-6) -> None:
         super().__init__()
-        self.eps=eps
-        self.alpha=nn.Parameter(torch.ones(1)) #Multiplied
-        self.bias=nn.Parameter(torch.zeros(1)) #Added
+        self.eps = eps
+        self.alpha = nn.Parameter(torch.ones(1)) #Multiplied
+        self.bias = nn.Parameter(torch.zeros(1)) #Added
 
-    def forward(self,x):
-        mean=x.mean(dim=-1,keepdim=True)
-        std=x.std(dim=-1,keepdim=True)
-        return self.alpha*(x-mean)/(std+self.eps)+self.bias
+    def forward(self, x):
+        mean = x.mean(dim=-1, keepdim=True)
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
+        return self.alpha * (x - mean) / torch.sqrt(var + self.eps) + self.bias
 class FeedForwardBlock(nn.Module):
     def __init__(self,d_model:int,d_ff:int,dropout:float)->None:
         super().__init__()
@@ -94,7 +94,8 @@ class MultiHeadAttentionBlock(nn.Module):
         key=key.view(key.shape[0],key.shape[1],self.h,self.d_k).transpose(1,2)
         value=value.view(value.shape[0],value.shape[1],self.h,self.d_k).transpose(1,2)
 
-        x,self.attention_scores=MultiHeadAttentionBlock.attention(query,key,value,mask,self.dropout)
+        x, attention_scores = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
+        self.attention_scores = attention_scores.detach()
         # (batch,h,seq_len,d_k) --> (batch,seq_len,h,d_k) --> (batch,seq_len,d_model)
         x=x.transpose(1,2).contiguous().view(x.shape[0],-1,self.h*self.d_k)
         # (batch,seq_len,d_model)-->(batch,seq_len,d_model)
@@ -153,8 +154,9 @@ class ProjectionLayer(nn.Module):
     def __init__(self,d_model:int,vocab_size:int)->None:
         super().__init__()
         self.proj=nn.Linear(d_model,vocab_size)
-    def forward(self,x):
-        return torch.log_softmax(self.proj(x),dim=-1)
+    def forward(self, x):
+        # Return logits for standard CrossEntropyLoss and efficient greedy decoding
+        return self.proj(x)
 
 class Transformer(nn.Module):
     def __init__(self,encoder:Encoder,decoder:Decoder,src_embed:InputEmbeddings,tgt_embed:InputEmbeddings,src_pos:PositionalEncoding,tgt_pos:PositionalEncoding,projection_layer:ProjectionLayer)->None:
